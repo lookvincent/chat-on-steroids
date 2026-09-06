@@ -187,12 +187,13 @@ export type GoalReasoning = (typeof GOAL_REASONING_LEVELS)[number];
  * The goal loop: a second model, standing in for the user, that keeps a chat going.
  *
  * When ChatGPT finishes a turn, the recorded conversation — every user message and every
- * final ChatGPT answer, and nothing else — is sent to an OpenRouter model with an editable
+ * final ChatGPT answer, and nothing else — is sent to the configured provider's model with an editable
  * continuation-gate instruction. A completion claim produces `NO_REPLY`; only a concrete
  * requested item the final answer explicitly leaves unfinished becomes a user message.
  *
- * Off by default, and useless without an OpenRouter API key: the key is the credential the
- * whole feature runs on, so the UI says so rather than failing quietly at the first turn.
+ * Off by default, and useless without a key for the configured provider: the key is the credential the
+ * whole feature runs on, so the UI says so rather than failing quietly at the first turn. A custom
+ * keyless local endpoint is the one exception — there is nothing to store for it.
  */
 /**
  * Which of the two standing modes the switch runs.
@@ -206,6 +207,27 @@ export const GOAL_MODES = ['goal', 'loop'] as const;
 export type GoalMode = (typeof GOAL_MODES)[number];
 
 export type GoalBackend = 'api' | 'chatgpt' | 'templates';
+/**
+ * Where the Goal/Loop second model runs when the backend is `api`.
+ *
+ * `openrouter` is the shipped default: OpenRouter's catalogue, key and routing. `custom`
+ * points at any OpenAI-compatible `/chat/completions` endpoint the user runs themselves
+ * (Ollama, vLLM, LM Studio, a gateway) and is used with that endpoint's own model id.
+ * The other backends (`chatgpt`, `templates`) never read this block.
+ */
+export const GOAL_PROVIDERS = ['openrouter', 'custom'] as const;
+export type GoalProviderKind = (typeof GOAL_PROVIDERS)[number];
+
+export interface GoalProviderSettings {
+  kind: GoalProviderKind;
+  /**
+   * Base URL of a custom provider, e.g. `http://localhost:11434/v1`. Ignored unless
+   * kind is `custom`. Stored verbatim; validated when a draft is started, not when saved,
+   * so a typo fails loudly at use time rather than silently rewriting the user's text.
+   */
+  baseUrl: string;
+}
+
 export interface GoalSettings {
   /** Optional active-turn Goal impulses; zero disables them. */
   impulseMinutes?: number;
@@ -223,7 +245,8 @@ export interface GoalSettings {
    * with the switch off runs as `goal`, because Loop is a thing the user switches on.
    */
   mode: GoalMode;
-  /** An OpenRouter model id, exactly as its `/models` listing spells it. */
+  provider: GoalProviderSettings;
+  /** A model id: an OpenRouter id while the provider is openrouter, the endpoint's own id while custom. */
   model: string;
   reasoning: GoalReasoning;
   /** Editable continuation-gate instruction sent as the OpenRouter system message. */
@@ -507,8 +530,10 @@ export interface AppState {
   secureStorage: SecureStorageInfo;
   /** True when an OpenAI control-plane API key is stored. The key itself never leaves the main process. */
   hasApiKey: boolean;
-  /** True when an OpenRouter key is stored, which is what the goal loop spends. Same rule: the key stays here. */
+  /** True when an OpenRouter key is stored, which is what the goal loop spends on that provider. Same rule: the key stays here. */
   hasGoalKey: boolean;
+  /** True when a custom-provider key is stored. Only meaningful beside a custom endpoint, which may also run keyless. */
+  hasCustomProviderKey: boolean;
   /** Resolved path of the tunnel binary we would run, or null if we cannot find one. */
   resolvedBinary: string | null;
   /** Version of the tunnel-client copy shipped inside the app, for diagnostics. */

@@ -41,7 +41,7 @@ export interface SettingsPatch {
   goal: Config['goal'];
 }
 
-/** One page of the OpenRouter catalogue, as the model picker asks for it. */
+/** One page of the model catalogue, as the model picker asks for it. */
 export interface GoalModelPage {
   models: Array<{ id: string; name: string; created: number; contextLength: number }>;
   total: number;
@@ -85,6 +85,8 @@ const api = {
   setApiKey: (value: string) => call<AppState>('secret:set', { value }),
   // The goal loop's own credential. Same channel, named slot; the value only ever goes in.
   setGoalKey: (value: string) => call<AppState>('secret:set', { value, key: 'openRouterApiKey' }),
+  // The same, for a custom provider endpoint. Optional: keyless local servers need nothing stored.
+  setCustomProviderKey: (value: string) => call<AppState>('secret:set', { value, key: 'customProviderApiKey' }),
   listGoalModels: (offset: number) => call<GoalModelPage>('goal:models', { offset }),
   pickBinary: () => call<AppState>('binary:pick'),
   connect: () => call<AppState>('connection:connect'),

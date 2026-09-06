@@ -7383,10 +7383,11 @@
   }
 
   /**
-   * The short name of an OpenRouter model id, for a caption a person reads at a glance.
+   * The short name of a model id, for a caption a person reads at a glance.
    *
    * `deepseek/deepseek-v4-flash` is the id the API wants and not what anybody calls it. The
-   * vendor prefix and the `:free`/`:nitro` variant suffix are both routing detail.
+   * vendor prefix and the `:free`/`:nitro` variant suffix are both routing detail. A custom
+   * endpoint id without a slash passes through untouched.
    */
   function modelLabel(id) {
     const name = String(id || '').trim();
@@ -7431,8 +7432,11 @@
     if (!goal) return null;
     const draft = goal.draft || null;
     const who = modelLabel(goal.model);
+    // The key prompt elsewhere needs no such switch: a custom endpoint is often keyless,
+    // so a missing key only ever means OpenRouter. Progress copy names the endpoint.
+    const dest = goal.provider === 'custom' ? 'custom endpoint' : 'OpenRouter';
     const bar = (at, done = false) => ({ steps: GOAL_STEPS, at, done });
-    const failure = goal.error || (draft && draft.stage === 'failed' ? draft.error || 'OpenRouter did not answer' : '');
+    const failure = goal.error || (draft && draft.stage === 'failed' ? draft.error || `${dest} did not answer` : '');
     if (failure) {
       const at = draft && draft.stage === 'failed' ? 2 : (GOAL_STEP_AT[goal.phase] ?? 1);
       if (goal.phase === 'retrying') {
@@ -7462,14 +7466,14 @@
       return { stage: 'Sending it to ChatGPT', detail: '', body: draft.reply, kind: 'goal', ...bar(3) };
     }
     if (goal.phase === 'requesting' && !draft) {
-      return { stage: 'Sending the answer to OpenRouter', detail: who, body: '', kind: 'goal', ...bar(1) };
+      return { stage: `Sending the answer to ${dest}`, detail: who, body: '', kind: 'goal', ...bar(1) };
     }
     if (!draft) return null;
     if (draft.stage === 'no-reply') {
       return { stage: 'Goal reached', detail: 'nothing was sent', body: '', kind: 'goal-done', ...bar(2, true) };
     }
     if (draft.stage === 'sending') {
-      return { stage: 'Sending the answer to OpenRouter', detail: who, body: '', kind: 'goal', ...bar(1) };
+      return { stage: `Sending the answer to ${dest}`, detail: who, body: '', kind: 'goal', ...bar(1) };
     }
     if (draft.stage === 'answering') {
       // Streamed, so the wait has something in it. The text is the message being written for
@@ -8681,7 +8685,7 @@
     }
     if (draft.stage === 'failed') {
       goalDraft = null;
-      const why = draft.error || 'OpenRouter did not answer';
+      const why = draft.error || `${goalConfig && goalConfig.provider === 'custom' ? 'custom endpoint' : 'OpenRouter'} did not answer`;
       const pending = goalConfig && goalConfig.pending;
       let retrying = draft.retryable === true && goalTurnId === draft.turnId;
       // A reload loses the document-local claim while the app keeps both the failed attempt

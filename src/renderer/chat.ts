@@ -2191,9 +2191,17 @@ export function chatSettingsPatch(current: Config): {
       loopBackend: $<HTMLSelectElement>('loopBackend').value as Config['goal']['loopBackend'],
       helperModel: $<HTMLSelectElement>('helperModel').value || current.goal.helperModel || 'gpt-5.6-sol',
       helperReasoning: ($<HTMLSelectElement>('helperReasoning').value || current.goal.helperReasoning || 'high') as Config['goal']['helperReasoning'],
-      // The chosen model is held here rather than in an input, because it is picked from a
-      // list and never typed. `current` is the fallback for the first save after a repaint.
-      model: goalModel || current.goal.model,
+      provider: {
+        kind: ($<HTMLSelectElement>('goalProvider').value || current.goal.provider?.kind || 'openrouter') as Config['goal']['provider']['kind'],
+        baseUrl: $<HTMLInputElement>('goalBaseUrl').value.trim()
+      },
+      // The api-backend model is picked from the catalogue and never typed, except on a
+      // custom endpoint whose id is typed in its own field instead. `current` is the
+      // fallback for the first save after a repaint.
+      model:
+        $<HTMLSelectElement>('goalProvider').value === 'custom'
+          ? $<HTMLInputElement>('goalCustomModel').value.trim() || current.goal.model
+          : goalModel || current.goal.model,
       reasoning: $<HTMLSelectElement>('goalReasoning').value as Config['goal']['reasoning'],
       // Blank means "restore the safe default", not "send an unconstrained system message".
       prompt: $<HTMLTextAreaElement>('goalPrompt').value.trim() || DEFAULT_GOAL_SYSTEM_PROMPT,
@@ -2342,6 +2350,17 @@ function applyGoal(state: AppState, previous?: Config): void {
     config.goal.loopPrompt,
     previous?.goal.loopPrompt
   );
+  // Which endpoint the api backend talks to. The key sentence below only applies to
+  // OpenRouter: a custom endpoint is often keyless, so a missing key never means custom.
+  const customProvider = config.goal.provider?.kind === 'custom';
+  const providerBaseUrl = config.goal.provider?.baseUrl ?? '';
+  applyChatValue($<HTMLSelectElement>('goalProvider'), customProvider ? 'custom' : 'openrouter', previous?.goal.provider?.kind);
+  applyChatValue($<HTMLInputElement>('goalBaseUrl'), providerBaseUrl, previous?.goal.provider?.baseUrl);
+  applyChatValue($<HTMLInputElement>('goalCustomModel'), config.goal.model, previous?.goal.model);
+  $('goalCustomPanel').hidden = !customProvider;
+  $('goalPickerRow').hidden = customProvider;
+  if (customProvider) $('goalModels').hidden = true;
+  $('goalKeyField').hidden = customProvider;
   $('goalModelName').textContent = config.goal.model;
   const goalKey = $<HTMLInputElement>('goalKey');
   goalKey.placeholder = state.hasGoalKey ? '•••••••• stored' : 'sk-or-v1-…';
@@ -2353,6 +2372,16 @@ function applyGoal(state: AppState, previous?: Config): void {
       : 'Stored with secure OS credential storage. It never leaves this app, and the browser is only ever handed the reply.';
   $('goalKeyState').classList.toggle('is-warn', !secureStorageAvailable);
   $<HTMLButtonElement>('goalKeyRemove').disabled = !state.hasGoalKey || !secureStorageAvailable;
+  const goalCustomKey = $<HTMLInputElement>('goalCustomKey');
+  goalCustomKey.placeholder = state.hasCustomProviderKey ? '•••••••• stored' : 'leave empty for a keyless local server';
+  goalCustomKey.disabled = !secureStorageAvailable;
+  $('goalCustomKeyState').textContent = !secureStorageAvailable
+    ? (state.secureStorage?.detail ?? 'Secure credential storage is unavailable.')
+    : state.hasCustomProviderKey
+      ? 'A key is stored with secure OS credential storage. Type a new one to replace it.'
+      : 'Optional. Stored with secure OS credential storage. It never leaves this app, and the browser is only ever handed the reply.';
+  $('goalCustomKeyState').classList.toggle('is-warn', !secureStorageAvailable);
+  $<HTMLButtonElement>('goalCustomKeyRemove').disabled = !state.hasCustomProviderKey || !secureStorageAvailable;
   if (goalModels.length > 0) paintGoalModels();
 }
 
@@ -2437,6 +2466,27 @@ function wireGoal(save: () => Promise<void>): void {
       toast('OpenRouter key removed');
     }
   });
+  // Same blur-to-save discipline as the OpenRouter key above. Empty submits nothing:
+  // a keyless local endpoint is a supported configuration, not a key being removed.
+  $('goalCustomKey').addEventListener('blur', async () => {
+    const input = $<HTMLInputElement>('goalCustomKey');
+    const submitted = input.value;
+    const key = submitted.trim();
+    if (key === '') return;
+    const next = await run(api.setCustomProviderKey(key));
+    if (next) {
+      if (input.value === submitted) input.value = '';
+      applyGoal(next);
+      toast('Custom provider key stored');
+    }
+  });
+  $('goalCustomKeyRemove').addEventListener('click', async () => {
+    const next = await run(api.setCustomProviderKey(''));
+    if (next) {
+      applyGoal(next);
+      toast('Custom provider key removed');
+    }
+  });
 }
 
 /**
@@ -2471,6 +2521,9 @@ const CHAT_INPUTS = [
   'maWorkers',
   'allowUnattributedCalls',
   'recoverAgentTabs',
+  'goalProvider',
+  'goalBaseUrl',
+  'goalCustomModel',
   'goalReasoning',
   'goalPrompt',
   'goalObjectivePrompt',

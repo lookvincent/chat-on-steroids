@@ -1807,6 +1807,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       backend: goalBackendFor(goalModeFor(id)),
       hasKey: await goalKeyPresent(goalModeFor(id)),
       model: getConfig().goal.model,
+      // Which endpoint the draft runs on, so the page names the right one in progress
+      // copy instead of always saying OpenRouter. The key prompt needs no such field:
+      // a custom endpoint is often keyless, so a missing key only ever means OpenRouter.
+      provider: getConfig().goal.provider.kind,
       // This chat's own goal, and never a worker's: the loop is off there whatever is
       // stored, and reporting one would let the page offer to drive a chat the prime owns.
       objective: superseded || finishOnly || goalWorkerChat(id) ? '' : goalObjectiveFor(id),

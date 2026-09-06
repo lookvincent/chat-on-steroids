@@ -84,6 +84,9 @@ describe('settings migration', () => {
     expect(loaded.capabilities.create).toBe(true);
     expect(loaded.capabilities.clipboardRead).toBe(false);
     expect(loaded.capabilities.clipboardWrite).toBe(false);
+    // A config written before custom providers existed keeps OpenRouter with no URL:
+    // an upgrade never moves a running Goal loop onto an endpoint nobody chose.
+    expect(loaded.goal.provider).toEqual({ kind: 'openrouter', baseUrl: '' });
     expect(loaded.ui.autoConnect).toBe(true);
     expect(loaded.ui.privacyScreenshots).toBe(false);
     // The one tunnel id a pre-split config had is Core's, because Core is the connector
@@ -474,6 +477,7 @@ describe('the goal loop settings', () => {
       helperReasoning: 'high',
       enabled: true,
       mode: 'loop',
+      provider: { kind: 'openrouter', baseUrl: '' },
       model: 'openai/gpt-5.2-mini:nitro',
       reasoning: 'high',
       prompt,
@@ -620,6 +624,7 @@ describe('the goal loop settings', () => {
       helperReasoning: 'high',
       enabled: false,
       mode: 'goal',
+      provider: { kind: 'openrouter', baseUrl: '' },
       model: DEFAULT_GOAL_MODEL,
       reasoning: 'default',
       prompt: defaultConfig().goal.prompt,

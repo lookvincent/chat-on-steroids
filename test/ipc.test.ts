@@ -740,6 +740,61 @@ describe('the goal model id', () => {
     expect(reply.ok, reply.error).toBe(true);
     expect(getConfig().goal.model).toBe(defaultConfig().goal.model);
   });
+
+  it('accepts a bare endpoint id while custom and stores the base URL verbatim', async () => {
+    const patch = {
+      ...settings({ record: false, multiAgent: false }),
+      goal: {
+        ...defaultConfig().goal,
+        provider: { kind: 'custom' as const, baseUrl: 'http://localhost:11434/v1/' },
+        model: 'llama3.1'
+      }
+    };
+    const reply = await save(patch);
+    expect(reply.ok, reply.error).toBe(true);
+    expect(getConfig().goal.provider).toEqual({ kind: 'custom', baseUrl: 'http://localhost:11434/v1/' });
+    expect(getConfig().goal.model).toBe('llama3.1');
+  });
+
+  it('still refuses a bare id while on OpenRouter, and an unknown provider kind', async () => {
+    const custom = {
+      ...settings({ record: false, multiAgent: false }),
+      goal: {
+        ...defaultConfig().goal,
+        provider: { kind: 'custom' as const, baseUrl: 'http://localhost:11434/v1' },
+        model: 'llama3.1'
+      }
+    };
+    // Same model, OpenRouter provider: the vendor/model shape still applies.
+    const openrouter = {
+      ...custom,
+      goal: { ...custom.goal, provider: { kind: 'openrouter' as const, baseUrl: '' } }
+    };
+    expect((await save(openrouter)).ok).toBe(false);
+    const unknown = {
+      ...custom,
+      goal: { ...custom.goal, provider: { kind: 'own' as never, baseUrl: '' } }
+    };
+    expect((await save(unknown)).ok).toBe(false);
+  });
+});
+
+describe('the custom provider key slot', () => {
+  const storeSecret = (payload: unknown): Promise<any> =>
+    handlers.get('secret:set')!(null, payload) as Promise<any>;
+
+  it('stores a custom key in its own slot and refuses an unnamed one', async () => {
+    const stored = await storeSecret({ value: 'sk-custom-1', key: 'customProviderApiKey' });
+    expect(stored.ok, stored.error).toBe(true);
+    expect(stored.data.hasCustomProviderKey).toBe(true);
+    // The OpenRouter slot is untouched: naming is exact, never a shared bucket.
+    expect(stored.data.hasGoalKey).toBe(false);
+    const cleared = await storeSecret({ value: '', key: 'customProviderApiKey' });
+    expect(cleared.ok).toBe(true);
+    expect(cleared.data.hasCustomProviderKey).toBe(false);
+    const refused = await storeSecret({ value: 'x', key: 'nobodyDefinedThis' });
+    expect(refused.ok).toBe(false);
+  });
 });
 
 describe('the editable goal system prompt', () => {
