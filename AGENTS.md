@@ -607,6 +607,7 @@ earn it today.
 | `find` | `search` **and not** `command` | `tools-core.ts` → `search.ts` |
 | `apply_patch` | any of `create`/`edit`/`move`/`deleteFile` | `codex/apply-patch/*` |
 | `exec_command`, `write_stdin` | `command` | `codex/unified-exec.ts` |
+| `download_artifact` | `saveArtifact` | `tools-core.ts` → `artifact-fetch.ts` + `artifact-target.ts` |
 | `session` | recording enabled | session subsystem |
 | `agents` | multi-agent enabled | `agents.ts` |
 

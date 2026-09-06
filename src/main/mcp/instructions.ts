@@ -99,7 +99,12 @@ function coreInstructions(ctx: ToolContext, platform: NodeJS.Platform): string {
     // The one exception to the virtual-path rule above, and the model has to be told: cmd
     // is a program, not a path, so it reaches the shell exactly as written.
     'exec_command’s workdir is virtual, but its cmd is not translated — set workdir and write paths inside the command relative to it.',
-    'Output is capped. When a result says it was truncated, narrow the request instead of repeating it.'
+    'Output is capped. When a result says it was truncated, narrow the request instead of repeating it.',
+    ...(ctx.caps.saveArtifact
+      ? [
+          'When the user supplies or ChatGPT generates a file that is not on this computer, save it with download_artifact using its native file value and a destination path inside an approved folder. The tool refuses to overwrite and returns the saved path. Never recreate such files with apply_patch or exec_command, and never place signed URLs, file objects or base64 content in shell commands or logs.'
+        ]
+      : [])
   ];
 
   if (desktop && (ctx.caps.screen || ctx.caps.control || ctx.caps.clipboardRead || ctx.caps.clipboardWrite)) {

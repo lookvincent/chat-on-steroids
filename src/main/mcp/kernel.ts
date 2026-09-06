@@ -980,6 +980,12 @@ export interface SurfaceRegistrar {
       inputSchema: Schema;
       outputSchema?: z.ZodType;
       annotations?: ToolAnnotations;
+      /**
+       * Opaque host metadata advertised verbatim in tools/list.
+       * Used once by download_artifact for {"openai/fileParams": ["file"]},
+       * which tells ChatGPT to inject the native file value. Never interpreted here.
+       */
+      _meta?: Record<string, unknown>;
     },
     handler: (args: z.output<Schema>) => Promise<ToolResult>
   ): void;

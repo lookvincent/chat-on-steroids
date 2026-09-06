@@ -31,6 +31,7 @@ export const CAPABILITIES = [
   'move',
   'deleteFile',
   'command',
+  'saveArtifact',
   'screen',
   'control',
   'clipboardRead',
@@ -60,6 +61,7 @@ export const WRITE_CAPABILITIES: readonly Capability[] = [
   'move',
   'deleteFile',
   'command',
+  'saveArtifact',
   'control',
   'clipboardWrite'
 ];
@@ -267,12 +269,22 @@ export interface MultiAgentSettings {
   recoverAgentTabs: boolean;
 }
 
+/**
+ * Bounds for saving ChatGPT-provided files with `download_artifact`.
+ * Kept beside the capability it gates so the limit and the switch cannot drift apart.
+ */
+export interface ArtifactSettings {
+  /** Per-file byte ceiling enforced before, during and after the download stream. */
+  maxFileBytes: number;
+}
+
 export interface Config {
   roots: Root[];
   capabilities: Capabilities;
   readOnly: boolean;
   tunnel: TunnelSettings;
   ui: UiPrefs;
+  artifacts: ArtifactSettings;
   sessions: SessionSettings;
   compaction: CompactionSettings;
   multiAgent: MultiAgentSettings;
@@ -529,6 +541,7 @@ export const DEFAULT_CAPABILITIES: Capabilities = {
   move: false,
   deleteFile: false,
   command: false,
+  saveArtifact: false,
   screen: false,
   control: false,
   clipboardRead: false,
@@ -545,6 +558,7 @@ export const CAPABILITY_LABELS: Record<Capability, string> = {
   move: 'Move / rename',
   deleteFile: 'Delete files',
   command: 'Run commands',
+  saveArtifact: 'Save ChatGPT files',
   screen: 'See the screen',
   control: 'Control mouse and keyboard',
   clipboardRead: 'Read clipboard',
@@ -569,6 +583,7 @@ export const CAPABILITY_DETAILS: Record<Capability, string> = {
   move: 'Move or rename, both ends inside approved folders.',
   deleteFile: 'Permanent — there is no Recycle Bin.',
   command: 'Run anything as you. NOT limited to approved folders.',
+  saveArtifact: 'Save images and files ChatGPT generates into an approved folder.',
   screen: 'Screenshots, open windows, and the controls on them.',
   control: 'Moves the pointer, clicks, types and presses keys, as you.',
   clipboardRead: 'Read the current clipboard text.',
@@ -593,6 +608,7 @@ export const CAPABILITY_TOOLS: Record<Capability, readonly string[]> = {
   move: ['apply_patch'],
   deleteFile: ['apply_patch'],
   command: ['exec_command', 'write_stdin'],
+  saveArtifact: ['download_artifact'],
   screen: ['observe'],
   control: ['computer'],
   clipboardRead: ['computer'],

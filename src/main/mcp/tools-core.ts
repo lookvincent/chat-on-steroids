@@ -4,13 +4,13 @@ import { getConfig } from '../config.js';
 /**
  * The Core connector: reading, changing and running code on this PC.
  *
- * Seven tools at the absolute maximum, and usually five. That number is the design (see
+ * Nine tools at the absolute maximum, and usually seven. That number is the design (see
  * `docs/tool-surface.md` §3): a no-query discovery pull against this connector returns
  * every schema here at once, so the surface is sized for the worst case rather than for
  * the case where the harness happens to ask a narrow question.
  *
- * What used to be forty-five tools did not become seven by dropping capability. It became
- * seven by separating *primitives* from *procedures*: `exec_command` can run git, so `git`
+ * What used to be forty-five tools did not become nine by dropping capability. It became
+ * eight by separating *primitives* from *procedures*: `exec_command` can run git, so `git`
  * is a skill rather than a tool; `read` can open a directory, a text file or an image,
  * because those are three shapes of one question. Anything that reads as "and also, for
  * this special case…" belongs in a skill over these primitives, not in a schema every
@@ -125,6 +125,7 @@ import { repairPrimeFromResumeShadow } from '../session/continuation.js';
 import {
   currentCall,
   currentCaller,
+  noteChange,
   noteChanges,
   noteCount,
   noteDetail,
@@ -153,6 +154,9 @@ import {
   type ToolResult
 } from './kernel.js';
 import { registerSessionTool as registerSessionSearchReadTool } from './session-tool.js';
+import { ArtifactFetchError } from './artifact-fetch.js';
+import { ArtifactTargetError } from './artifact-target.js';
+import { downloadArtifactFile } from './artifact-download.js';
 
 /** Entries one `read` of a directory returns before it says it stopped. */
 const MAX_DIR_ENTRIES = 200;
@@ -967,6 +971,80 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
                 ? ` Retry this same session_id (${input.session_id}); do not replace it with a new command.`
                 : '';
             return fail(`write_stdin failed: ${message}${retry}`);
+          }
+        })
+    );
+  }
+
+  // ------------------------------------------------------- download_artifact
+
+  // Saves one ChatGPT-provided native file (generated image, PDF, ...) into an
+  // approved folder. The file value is injected by ChatGPT because the schema
+  // carries _meta openai/fileParams; anything the model invents fails the fetch
+  // gateway before any disk is touched. Binary files are never recreated through
+  // apply_patch or exec_command.
+  if (exposedCaps.saveArtifact) {
+    reg.register(
+      'download_artifact',
+      {
+        title: 'Save ChatGPT file',
+        description:
+          'Save one file ChatGPT generated or attached to a path inside an approved folder. ' +
+          'The file value is supplied by ChatGPT itself — never invent download_url or file_id values. ' +
+          'The destination must not already exist; missing parent folders are created. ' +
+          'Use for images, PDFs, archives and other files ChatGPT produces; never recreate such files with apply_patch or exec_command.',
+        inputSchema: z
+          .object({
+            file: z
+              .strictObject({
+                download_url: z.string(),
+                file_id: z.string(),
+                mime_type: z.string().nullable().optional(),
+                file_name: z.string().nullable().optional(),
+                name: z.string().nullable().optional(),
+                size: z.number().int().nonnegative().nullable().optional()
+              })
+              .describe('Native file value injected by ChatGPT.'),
+            path: pathArg.describe(
+              'Destination inside an approved folder: a virtual /<root>/... path or an absolute native path. ' +
+                'Relative paths resolve against this chat\'s folder. The destination must name a file that does not already exist.'
+            )
+          })
+          .strict(),
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+        _meta: { 'openai/fileParams': ['file'] }
+      },
+      async ({ file, path: requestedPath }) =>
+        guard('download_artifact', async () => {
+          if (!caps.saveArtifact) {
+            return fail(
+              'TOOL_DISABLED: download_artifact is disabled by the current Chat On Steroids permissions. Ask the user to enable saving ChatGPT files in the app.'
+            );
+          }
+          try {
+            const saved = await downloadArtifactFile(ctx.roots, requestedPath, file, {
+              maxFileBytes: getConfig().artifacts.maxFileBytes
+            });
+            noteChange({ path: saved.virtual, added: 0, removed: 0, approximate: true });
+            logInfo(`tool download_artifact ${saved.virtual} (${formatBytes(saved.size)}, ${saved.sha256})`);
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Saved ${saved.virtual} (${formatBytes(saved.size)}, ${saved.sha256}).`
+                }
+              ],
+              structuredContent: { path: saved.virtual, size: saved.size, sha256: saved.sha256 }
+            };
+          } catch (error) {
+            if (
+              error instanceof ArtifactFetchError ||
+              error instanceof ArtifactTargetError ||
+              error instanceof SandboxError
+            ) {
+              return fail(`download_artifact failed: ${error.message}`);
+            }
+            throw error;
           }
         })
     );

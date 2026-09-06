@@ -115,7 +115,7 @@ Permission changes take effect locally immediately. Schema changes schedule a se
 
 | Connector | Tools | What they do |
 | --- | --- | --- |
-| **Core** (all platforms) | `read`, `view_image`, `find`, `apply_patch`, `exec_command`, `write_stdin`, `session`, `agents` | Bounded reads and search inside approved folders, preflighted multi-file patches, shell commands and interactive terminals, lookups into the recorded session, and worker chat control |
+| **Core** (all platforms) | `read`, `view_image`, `find`, `apply_patch`, `exec_command`, `write_stdin`, `download_artifact`, `session`, `agents` | Bounded reads and search inside approved folders, preflighted multi-file patches, shell commands and interactive terminals, saving ChatGPT-generated files, lookups into the recorded session, and worker chat control |
 | **Desktop** (Windows, and macOS when switched on) | `observe`, `computer` | Screenshots, window and control inspection, mouse, keyboard and clipboard |
 
 The live tool list follows your settings: `find` is the no-shell search fallback and steps aside when commands are enabled. Enabling Session finish adds the Astra-only `session_finish` tool. Revoking a permission takes effect immediately, even while ChatGPT still shows the old schema. The full contract lives in [`docs/tool-surface.md`](docs/tool-surface.md).

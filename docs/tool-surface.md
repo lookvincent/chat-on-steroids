@@ -12,7 +12,7 @@ separate secret tokenized local paths.
 
 | Connector | Purpose | Possible tools |
 | --- | --- | --- |
-| **Chat On Steroids Core** | Approved files, patches, terminal, recorded-session lookup, workers | `read`, `view_image`, `find`, `apply_patch`, `exec_command`, `write_stdin`, `session`, `agents` |
+| **Chat On Steroids Core** | Approved files, patches, terminal, ChatGPT file saving, recorded-session lookup, workers | `read`, `view_image`, `find`, `apply_patch`, `exec_command`, `write_stdin`, `download_artifact`, `session`, `agents` |
 | **Chat On Steroids Desktop** | **Windows/macOS:** screen, windows, mouse/keyboard and clipboard | `observe`, `computer` |
 
 The Desktop connector is optional on Windows/macOS. Core is the main connector everywhere.
@@ -23,8 +23,8 @@ Desktop permissions off at runtime while preserving stored choices for a config 
 Windows or macOS. Existing configs keep explicit choices during upgrades; missing legacy permissions are
 not silently widened.
 
-With the fresh all-on capability snapshot, Core advertises seven schemas:
-`read`, `view_image`, `apply_patch`, `exec_command`, `write_stdin`, `session`, and `agents`.
+With the fresh all-on capability snapshot, Core advertises eight schemas:
+`read`, `view_image`, `apply_patch`, `exec_command`, `write_stdin`, `download_artifact`, `session`, and `agents`.
 `find` is the search fallback for a snapshot where search is enabled and command execution is
 unavailable. Tool exposure is monotonic within a running connector instance, so a permission
 changed mid-conversation can leave a previously exposed name listed; its handler still enforces
@@ -78,6 +78,16 @@ budget. A blank `chars` value is a poll rather than a separate process-status to
 poll returns as soon as the process produces output rather than holding the full yield window;
 anything that arrives afterwards stays buffered for the next poll. A non-empty write keeps
 Codex's collection-window behaviour so one interactive response is gathered whole.
+
+### `download_artifact`
+
+Saves one file ChatGPT generated or attached into an approved folder. The file value is
+injected by ChatGPT (the schema carries `_meta` `openai/fileParams`); the model supplies
+only the destination path, never a URL or bytes. Gated by the save-artifact capability
+and bounded by a per-file byte limit (default 20 MiB). Missing parents are created, an
+existing destination is refused rather than overwritten, and symlinked parents are
+rejected. Binary files must go through this tool, never be recreated with
+`apply_patch` or `exec_command`.
 
 ### `session`
 

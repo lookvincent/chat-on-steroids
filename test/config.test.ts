@@ -84,6 +84,10 @@ describe('settings migration', () => {
     expect(loaded.capabilities.create).toBe(true);
     expect(loaded.capabilities.clipboardRead).toBe(false);
     expect(loaded.capabilities.clipboardWrite).toBe(false);
+    // A config written before download_artifact existed gains the new switch off and a
+    // bounded default limit: an upgrade never widens what the user approved.
+    expect(loaded.capabilities.saveArtifact).toBe(false);
+    expect(loaded.artifacts.maxFileBytes).toBe(defaultConfig().artifacts.maxFileBytes);
     expect(loaded.ui.autoConnect).toBe(true);
     expect(loaded.ui.privacyScreenshots).toBe(false);
     // The one tunnel id a pre-split config had is Core's, because Core is the connector

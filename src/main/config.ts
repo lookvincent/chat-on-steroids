@@ -18,6 +18,7 @@ import {
   WRITE_CAPABILITIES,
   type Capabilities,
   DESKTOP_CAPABILITIES,
+  type ArtifactSettings,
   type CompactionSettings,
   type Config,
   type GoalSettings,
@@ -112,6 +113,17 @@ const DEFAULT_COMPACTION: CompactionSettings = {
   auto: true,
   autoTokens: DEFAULT_SESSIONS.advisoryTokens
 };
+/**
+ * Default bound for `download_artifact`.
+ *
+ * 20 MiB covers generated images, PDFs and small archives without letting one call
+ * fill the disk or blow the MCP result budget. Enforced before, during and after
+ * the stream (see artifact-fetch/artifact-target), so a lying Content-Length helps nothing.
+ */
+const DEFAULT_ARTIFACTS: ArtifactSettings = {
+  maxFileBytes: 20 * 1024 * 1024
+};
+
 /**
  * The goal loop's defaults.
  *
@@ -317,6 +329,18 @@ const configSchema = z.object({
     })
     .optional()
     .default({ ...DEFAULT_MULTI_AGENT }),
+  artifacts: z
+    .object({
+      maxFileBytes: z
+        .number()
+        .int()
+        .min(1)
+        .max(256 * 1024 * 1024)
+        .optional()
+        .default(DEFAULT_ARTIFACTS.maxFileBytes)
+    })
+    .optional()
+    .default({ ...DEFAULT_ARTIFACTS }),
   // An empty model id is repaired rather than rejected: the id is free text from a
   // provider listing that changes weekly, and a config that lost it must still load with
   // every root and permission in it intact.
@@ -408,6 +432,7 @@ export function defaultConfig(platform: NodeJS.Platform = process.platform, rele
     sessions: { ...DEFAULT_SESSIONS },
     compaction: { ...DEFAULT_COMPACTION },
     multiAgent: { ...FIRST_LAUNCH_MULTI_AGENT },
+    artifacts: { ...DEFAULT_ARTIFACTS },
     goal: { ...DEFAULT_GOAL }
   };
 }

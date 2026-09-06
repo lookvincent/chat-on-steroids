@@ -63,8 +63,8 @@ const GROUPS: Group[] = [
     id: 'write',
     title: 'Change files',
     icon: 'i-pencil',
-    blurb: 'Create, edit, move and delete, inside those folders only.',
-    caps: ['create', 'edit', 'move', 'deleteFile']
+    blurb: 'Create, edit, move, delete and save ChatGPT files, inside those folders only.',
+    caps: ['create', 'edit', 'move', 'deleteFile', 'saveArtifact']
   },
   {
     id: 'desktop',
