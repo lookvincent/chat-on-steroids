@@ -795,6 +795,39 @@ describe('the custom provider key slot', () => {
     const refused = await storeSecret({ value: 'x', key: 'nobodyDefinedThis' });
     expect(refused.ok).toBe(false);
   });
+
+  it('retires drafts only when the active provider credential changes', async () => {
+    const goal = await import('../src/main/goal.js');
+    const base = defaultConfig();
+    await saveConfig({
+      ...base,
+      goal: {
+        ...base.goal,
+        backend: 'api',
+        provider: { kind: 'custom', baseUrl: 'http://localhost:11434/v1' }
+      }
+    });
+
+    const inactive = goal.startGoalDraft({
+      sessionId: 'inactive-key-session',
+      conversationId: 'inactive-key-chat',
+      turnId: 'inactive-key-turn',
+      deferStart: true
+    });
+    expect((await storeSecret({ value: 'sk-openrouter-unused', key: 'openRouterApiKey' })).ok).toBe(true);
+    expect(goal.beginGoalDraft('inactive-key-chat', inactive.token)).toBe(true);
+
+    goal.resetGoalStateForTests();
+    const active = goal.startGoalDraft({
+      sessionId: 'active-key-session',
+      conversationId: 'active-key-chat',
+      turnId: 'active-key-turn',
+      deferStart: true
+    });
+    expect((await storeSecret({ value: 'sk-custom-active', key: 'customProviderApiKey' })).ok).toBe(true);
+    expect(goal.beginGoalDraft('active-key-chat', active.token)).toBe(false);
+    goal.resetGoalStateForTests();
+  });
 });
 
 describe('the editable goal system prompt', () => {

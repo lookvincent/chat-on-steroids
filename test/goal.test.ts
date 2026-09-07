@@ -2399,7 +2399,7 @@ describe('a custom OpenAI-compatible provider', () => {
     const session = await userSession('c-custom-1');
     let sent: any = null;
     globalThis.fetch = (async (url: string, init: RequestInit) => {
-      sent = { url, headers: init.headers, body: JSON.parse(String(init.body)) };
+      sent = { url, headers: init.headers, body: JSON.parse(String(init.body)), redirect: init.redirect };
       return decision('continue', 'check the tokenizer first');
     }) as never;
 
@@ -2408,6 +2408,7 @@ describe('a custom OpenAI-compatible provider', () => {
 
     expect(view.stage).toBe('ready');
     expect(sent.url).toBe('http://localhost:11434/v1/chat/completions');
+    expect(sent.redirect).toBe('error');
     expect(sent.headers).not.toHaveProperty('authorization');
     expect(sent.headers).not.toHaveProperty('HTTP-Referer');
     expect(sent.headers).not.toHaveProperty('X-Title');
@@ -2438,8 +2439,10 @@ describe('a custom OpenAI-compatible provider', () => {
 
     expect(view.stage).toBe('no-reply');
     expect((sent.headers as Record<string, string>).authorization).toBe('Bearer sk-custom-test');
-    // `exclude` is OpenRouter vocabulary; a custom endpoint gets the effort alone.
-    expect(sent.body.reasoning).toEqual({ effort: 'high' });
+    // `reasoning` is OpenRouter vocabulary; custom OpenAI-compatible endpoints get
+    // the standard top-level effort field instead.
+    expect(sent.body.reasoning_effort).toBe('high');
+    expect(sent.body).not.toHaveProperty('reasoning');
   });
 
   it('fails settled on an invalid base URL instead of retrying forever', async () => {
@@ -2472,8 +2475,9 @@ describe('a custom OpenAI-compatible provider', () => {
 
   it('reads a vanilla OpenAI model list, and an empty one when unreachable', async () => {
     await useCustom();
-    globalThis.fetch = (async (url: string) => {
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
       expect(String(url)).toBe('http://localhost:11434/v1/models');
+      expect(init.redirect).toBe('error');
       return Response.json({ data: [{ id: 'llama3.1' }, { id: 'qwen3:8b', created: 1_700_000_000 }] });
     }) as never;
     const page = await goal.listGoalModels(0, 20);

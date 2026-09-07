@@ -71,7 +71,7 @@ import {
   GOAL_SYSTEM_TRAILER,
   goalObjectiveMessage
 } from '../shared/goal.js';
-import type { GoalMode, GoalProviderKind } from '../shared/types.js';
+import type { GoalMode, GoalProviderKind, GoalReasoning } from '../shared/types.js';
 
 /** Where OpenRouter lives. One host, both routes. */
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
@@ -92,10 +92,16 @@ export interface GoalEndpoint {
   baseUrl: string;
 }
 
-export function goalEndpoint(): GoalEndpoint {
-  const provider = getConfig().goal.provider;
+type GoalSettingsSnapshot = ReturnType<typeof getConfig>['goal'];
+
+function endpointFor(settings: GoalSettingsSnapshot): GoalEndpoint {
+  const provider = settings.provider;
   if (provider?.kind === 'custom') return { kind: 'custom', baseUrl: provider.baseUrl };
   return { kind: 'openrouter', baseUrl: OPENROUTER_BASE };
+}
+
+export function goalEndpoint(): GoalEndpoint {
+  return endpointFor(getConfig().goal);
 }
 
 /**
@@ -334,6 +340,9 @@ export interface GoalDraftView {
 // so there is no second place where a draft can be described as retryable and be wrong.
 interface GoalDraft extends Omit<GoalDraftView, 'retryable'> {
   backend: GoalBackend;
+  /** Provider selection frozen with model/prompts; its matching key is read by kind at start. */
+  endpoint: GoalEndpoint;
+  providerReasoning: GoalReasoning;
   sessionId: string;
   /** Frozen with the draft, just like its model, so one request never mixes two settings saves. */
   systemPrompt: string;
@@ -952,7 +961,10 @@ export function goalSettings(): { enabled: boolean; mode: GoalMode; model: strin
 }
 
 export function goalBackendFor(mode: GoalMode): GoalBackend {
-  const settings = getConfig().goal;
+  return backendFor(getConfig().goal, mode);
+}
+
+function backendFor(settings: GoalSettingsSnapshot, mode: GoalMode): GoalBackend {
   return mode === 'loop' ? settings.loopBackend ?? 'chatgpt' : settings.backend ?? 'chatgpt';
 }
 export async function goalKeyPresent(mode: GoalMode = goalDrivingMode()): Promise<boolean> {
@@ -1232,16 +1244,19 @@ export function startGoalDraft(input: StartGoalDraftInput): GoalDraftView {
     drafts.delete(input.conversationId);
   }
   const settings = getConfig().goal;
-  const backend = goalBackendFor(goalDrivingMode(input.conversationId));
+  const mode = goalDrivingMode(input.conversationId);
+  const backend = backendFor(settings, mode);
   const draft: GoalDraft = {
     token: `goal-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
     conversationId: input.conversationId,
     sessionId: input.sessionId,
     backend,
+    endpoint: endpointFor(settings),
+    providerReasoning: settings.reasoning,
     systemPrompt: settings.prompt,
     objectiveSystemPrompt: settings.objectivePrompt,
     loopSystemPrompt: settings.loopPrompt,
-    mode: goalDrivingMode(input.conversationId),
+    mode,
     objective: goalObjectiveFor(input.conversationId),
     clientId,
     turnId: input.turnId,
@@ -1308,6 +1323,14 @@ interface GoalRequest {
   sourceSessionId?: string;
   backend?: GoalBackend;
   reasoning?: 'none';
+  /**
+   * Frozen provider endpoint and reasoning for this request, snapshotted once by the
+   * caller next to the key read. Re-reading live config down here is what once let a
+   * mid-flight provider switch mix key-A with endpoint-B, so the api path below must
+   * not call goalEndpoint() or read settings.reasoning itself.
+   */
+  endpoint: GoalEndpoint;
+  providerReasoning: GoalReasoning;
   key: string;
   model: string;
   /**
@@ -1382,7 +1405,7 @@ async function requestGoalDecision(request: GoalRequest): Promise<GoalDecision |
     }
     return decision;
   }
-  const endpoint = goalEndpoint();
+  const endpoint = request.endpoint;
   let baseUrl: string;
   try {
     baseUrl = resolveGoalBaseUrl(endpoint);
@@ -1411,20 +1434,21 @@ async function requestGoalDecision(request: GoalRequest): Promise<GoalDecision |
   // Reasoning may still be used, but it is never part of the response body this app parses.
   // OpenRouter documents `exclude` as supported across models even when effort selection is
   // not. `default` therefore means "provider-selected effort", not "return its scratchpad".
-  // A custom endpoint gets the effort alone: `exclude` is OpenRouter vocabulary, and an
-  // endpoint that rejects unknown fields should run with reasoning `default`, which omits
-  // the block entirely.
+  // A custom endpoint gets the OpenAI-compatible top-level `reasoning_effort` instead:
+  // `reasoning` is OpenRouter vocabulary, and an endpoint that rejects unknown fields
+  // should run with reasoning `default`, which omits the field entirely.
   if (!custom) {
     body['reasoning'] = {
-      ...(request.reasoning ? { effort: request.reasoning } : settings.reasoning === 'default' ? {} : { effort: settings.reasoning }),
+      ...(request.reasoning ? { effort: request.reasoning } : request.providerReasoning === 'default' ? {} : { effort: request.providerReasoning }),
       exclude: true
     };
-  } else if (settings.reasoning !== 'default') {
-    body['reasoning'] = { effort: settings.reasoning };
+  } else if (request.providerReasoning !== 'default') {
+    body['reasoning_effort'] = request.providerReasoning;
   }
 
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
+    redirect: 'error',
     headers: {
       ...(request.key ? { authorization: `Bearer ${request.key}` } : {}),
       'content-type': 'application/json',
@@ -1472,14 +1496,13 @@ async function requestDrivingDecision(
 
 async function run(draft: GoalDraft): Promise<void> {
   if (await astraFinishOnly(draft.sessionId, draft.conversationId)) return settle(draft, 'no-reply');
-  const endpoint = goalEndpoint();
-  const key = await goalProviderKey(endpoint.kind);
+  const key = await goalProviderKey(draft.endpoint.kind);
   if (draft.acknowledged || drafts.get(draft.conversationId) !== draft) return;
   // Only the OpenRouter api backend fails here without a key. A custom endpoint may be a
   // keyless local server (key arrives as '' and no Authorization header is sent), and the
-  // other backends never needed one. A provider switch retires in-flight drafts at the
-  // settings boundary, so reading the endpoint live here cannot mix two configurations.
-  if (draft.backend === 'api' && !key && endpoint.kind === 'openrouter') return settle(draft, 'failed', 'no_api_key');
+  // other backends never needed one. Endpoint, model and reasoning were frozen together
+  // when this draft was created; this read asks only for that endpoint kind's matching key.
+  if (draft.backend === 'api' && !key && draft.endpoint.kind === 'openrouter') return settle(draft, 'failed', 'no_api_key');
   const messages = await conversationMessages(draft.sessionId);
   if (draft.acknowledged || drafts.get(draft.conversationId) !== draft) return;
   // Goal Mode is supposed to continue *the user's objective*. A partially recovered recorder
@@ -1501,6 +1524,8 @@ async function run(draft: GoalDraft): Promise<void> {
     const decision = draft.backend === 'templates' ? templateGoalDecision(messages.filter((message) => message.role === 'assistant').at(-1)?.content ?? '', Math.floor(Math.random() * 200), Math.floor(Math.random() * 200)) : await requestDrivingDecision({
       backend: draft.backend,
       sourceSessionId: draft.sessionId,
+      endpoint: draft.endpoint,
+      providerReasoning: draft.providerReasoning,
       key: key ?? '',
       model: draft.model,
       mode: draft.mode,
@@ -1596,8 +1621,11 @@ async function run(draft: GoalDraft): Promise<void> {
  */
 /** Finish asks the existing Loop driver for the next instruction; its caller owns delivery. */
 export async function draftFastFollowup(sessionId: string, signal: AbortSignal = AbortSignal.timeout(180000), preparedMessages?: ChatMessage[], publish?: GoalRequest['publish'], mode: GoalMode = 'loop'): Promise<string | null> {
-  const backend = goalBackendFor(mode);
-  const endpoint = goalEndpoint();
+  const settings = getConfig().goal;
+  const backend = backendFor(settings, mode);
+  const endpoint = endpointFor(settings);
+  const providerReasoning = settings.reasoning;
+  const model = settings.model;
   const key = await goalProviderKey(endpoint.kind);
   // Custom endpoints may be keyless; only OpenRouter fails here without one.
   if (backend === 'api' && !key && endpoint.kind === 'openrouter') throw new Error('Configure the Goal API key for automatic finish follow-ups, or choose Notify me');
@@ -1610,11 +1638,10 @@ export async function draftFastFollowup(sessionId: string, signal: AbortSignal =
     ['tool', 'sent'].includes(entry.state)).slice(-5).map(entry => entry.text);
   const messages = preparedMessages ?? await conversationMessages(sessionId, appInput, new Set(inputs.filter(entry => entry.finishOwner).map(entry => entry.id)));
   if (!objective && !messages.some(message => message.role === 'user')) throw new Error('No recorded user request is available for Goal');
-  const settings = getConfig().goal;
   const prompt = mode === 'loop' ? settings.loopPrompt : objective ? settings.objectivePrompt : settings.prompt;
   const decision = backend === 'templates'
     ? templateGoalDecision(messages.filter(message => message.role === 'assistant').at(-1)?.content ?? '', Math.floor(Math.random() * 200), Math.floor(Math.random() * 200))
-    : await requestDrivingDecision({ sourceSessionId: sessionId, backend, key: key ?? '', model: settings.model, mode,
+    : await requestDrivingDecision({ sourceSessionId: sessionId, backend, endpoint, providerReasoning, key: key ?? '', model, mode,
     system: objective ? [prompt, goalObjectiveMessage(objective)] : [prompt],
     messages,
     trailer: mode === 'loop' ? GOAL_LOOP_TRAILER : objective ? GOAL_OBJECTIVE_TRAILER : GOAL_SYSTEM_TRAILER, signal, publish });
@@ -1630,12 +1657,15 @@ export async function draftFastFollowup(sessionId: string, signal: AbortSignal =
 export async function draftTaskPlan(prompt: string, backend: 'api' | 'chatgpt', onProgress?: (progress: TaskProgressUpdate) => void, signal?: AbortSignal): Promise<string[]> {
   onProgress?.({ phase: 'preparing', text: '' });
   if (!prompt.trim() || prompt.length > 16000) throw new Error('Enter a task of at most 16000 characters');
-  const endpoint = goalEndpoint();
+  const settings = getConfig().goal;
+  const endpoint = endpointFor(settings);
+  const providerReasoning = settings.reasoning;
+  const model = settings.model;
   const key = backend === 'api' ? await goalProviderKey(endpoint.kind) : null;
   // Custom endpoints may be keyless; only OpenRouter fails here without one.
   if (backend === 'api' && !key && endpoint.kind === 'openrouter') throw new Error('Configure a Goal API key or choose ChatGPT');
   onProgress?.({ phase: 'generating', text: '' });
-  const result = await requestGoalDecision({ backend, lifetime: 'temporary-planner', key: key ?? '', model: getConfig().goal.model, mode: 'goal', publish: text => onProgress?.({ phase: 'generating', text: planProgressText(text) }),
+  const result = await requestGoalDecision({ backend, lifetime: 'temporary-planner', endpoint, providerReasoning, key: key ?? '', model, mode: 'goal', publish: text => onProgress?.({ phase: 'generating', text: planProgressText(text) }),
     system: ['You are a task planner, not the executor. Divide the user request into 2 to 12 sequential, self-contained stages. Preserve all requirements and constraints. Include implementation and meaningful verification phases, with a final full acceptance check. Do not invent unrelated work. Return action continue; its reply must be a JSON string encoding {"stages":["first task", "next task"]}. Keep the entire plan below 12000 characters. Each stage is sent to the same working conversation only after it finishes the previous stage.'],
     messages: [{ role: 'user', content: prompt.trim() }], trailer: 'Produce the staged plan now. Do not execute the task.', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
     .catch(error => { throw nativeGoalFailure(`request_failed: ${error instanceof Error ? error.message : error}`, backend); });
@@ -1659,24 +1689,29 @@ export async function draftOpeningMessage(
   signal?.throwIfAborted();
   onProgress?.({ phase: 'preparing', text: '' });
   if (!goal) return { error: 'no_objective' };
-  const endpoint = goalEndpoint();
+  const settings = getConfig().goal;
+  const mode = named ?? goalDrivingMode();
+  const backend = backendFor(settings, mode);
+  const endpoint = endpointFor(settings);
+  const providerReasoning = settings.reasoning;
+  const model = backend === 'chatgpt' ? settings.helperModel ?? 'gpt-5.6-sol' : settings.model;
+  const prompt = mode === 'loop' ? settings.loopPrompt : settings.objectivePrompt;
   const key = await goalProviderKey(endpoint.kind);
-  const backend = goalBackendFor(named ?? goalDrivingMode());
   if (backend === 'templates') return { reply: goal + GOAL_MARKER_INSTRUCTION, model: 'Offline Goal' };
   // Custom endpoints may be keyless; only OpenRouter fails here without one.
   if (backend === 'api' && !key && endpoint.kind === 'openrouter') return { error: 'no_api_key' };
-  const model = backend === 'chatgpt' ? getConfig().goal.helperModel ?? 'gpt-5.6-sol' : getConfig().goal.model;
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const mode = named ?? goalDrivingMode();
     const decision = await requestDrivingDecision({
       backend,
+      endpoint,
+      providerReasoning,
       key: key ?? '',
       model,
       mode,
       system: [
-        mode === 'loop' ? getConfig().goal.loopPrompt : getConfig().goal.objectivePrompt,
+        prompt,
         goalObjectiveMessage(goal)
       ],
       messages: [{ role: 'user', content: GOAL_OBJECTIVE_OPENING_TURN }],
@@ -2450,6 +2485,7 @@ async function allGoalModels(): Promise<GoalModel[]> {
   try {
     const baseUrl = resolveGoalBaseUrl(endpoint);
     response = await fetch(`${baseUrl}/models`, {
+      redirect: 'error',
       headers: {
         // The listing is public; the key is sent when there is one so a key with a restricted
         // model set sees its own set rather than the catalogue.

@@ -578,7 +578,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
       throw new Error('Secure OS credential storage is unavailable, so the key cannot be stored safely.');
     }
     await setSecret(key, value);
-    if (key === 'openRouterApiKey' || key === 'customProviderApiKey') retireGoalDrafts();
+    const activeProviderKey = getConfig().goal.provider.kind === 'custom' ? 'customProviderApiKey' : 'openRouterApiKey';
+    if (key === activeProviderKey) retireGoalDrafts();
     const what = key === 'openRouterApiKey' ? 'openrouter key' : key === 'customProviderApiKey' ? 'custom provider key' : 'api key';
     logInfo(value.trim() === '' ? `${what} cleared` : `${what} stored`);
     return buildState();
