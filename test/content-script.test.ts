@@ -13154,6 +13154,15 @@ describe('the goal loop', () => {
     });
     // Idle says nothing at all rather than an empty panel.
     expect(view({ phase: '', error: '', model: MODEL, draft: null })).toBeNull();
+    // A custom endpoint is named as one: the OpenRouter default above must not leak into a
+    // run that never touched OpenRouter.
+    expect(view({ phase: 'requesting', error: '', model: 'llama3.1', provider: 'custom', draft: null })).toMatchObject({
+      stage: 'Sending the answer to custom endpoint',
+      detail: 'llama3.1'
+    });
+    expect(
+      view({ phase: 'drafting', error: '', model: 'llama3.1', provider: 'custom', draft: { stage: 'failed' } })
+    ).toMatchObject({ detail: 'custom endpoint did not answer' });
     // A running job owns the panel: a compaction is the bigger event, and the loop refuses to
     // act during one anyway.
     expect(hook.stageView({ job: { stage: 'opening', busy: true }, goal: { phase: 'settling', model: MODEL, draft: null } })).toMatchObject({

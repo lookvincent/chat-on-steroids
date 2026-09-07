@@ -625,7 +625,32 @@
                   </div>
                 <h2 class="settings-section-title">API provider</h2>
                 <div class="pane">
-                  <div class="field">
+                  <div class="setting">
+                    <span class="setting-text">
+                      <b>Provider</b>
+                      <em>OpenRouter, or your own OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, a gateway) for the API response source.</em>
+                    </span>
+                    <select id="goalProvider">
+                      <option value="openrouter">OpenRouter</option>
+                      <option value="custom">Custom endpoint</option>
+                    </select>
+                  </div>
+
+                  <div class="field" id="goalCustomPanel" hidden>
+                    <label for="goalBaseUrl">Endpoint base URL</label>
+                    <input id="goalBaseUrl" type="text" spellcheck="false" placeholder="http://localhost:11434/v1" autocomplete="off" />
+                    <p class="hint">https, or http on localhost. <code>/chat/completions</code> and <code>/models</code> are called under it.</p>
+                    <label for="goalCustomModel">Model</label>
+                    <input id="goalCustomModel" type="text" spellcheck="false" placeholder="llama3.1" autocomplete="off" />
+                    <p class="hint">Your endpoint's own model id, typed exactly as it serves it.</p>
+                    <label for="goalCustomKey">Endpoint API key (optional)</label>
+                    <input id="goalCustomKey" type="password" spellcheck="false" placeholder="leave empty for a keyless local server" autocomplete="off" />
+                    <p class="hint" id="goalCustomKeyState"></p>
+                    <div class="step-actions">
+                      <button class="btn" id="goalCustomKeyRemove" type="button">Remove stored key</button>
+                    </div>
+                  </div>
+                  <div class="field" id="goalKeyField">
                     <label for="goalKey">OpenRouter API key</label>
                     <input id="goalKey" type="password" spellcheck="false" placeholder="sk-or-v1-…" autocomplete="off" />
                     <p class="hint" id="goalKeyState"></p>
@@ -636,7 +661,12 @@
                       </button>
                     </div>
                   </div>
-                  <div class="setting">
+                  <!--
+                    The catalogue is several hundred models long and changes weekly, so it is
+                    not fetched until somebody actually asks to change the one in use - and
+                    then twenty at a time, newest release first.
+                  -->
+                  <div class="setting" id="goalPickerRow">
                     <span class="setting-text">
                       <b>Model</b>
                       <em id="goalModelName"></em>

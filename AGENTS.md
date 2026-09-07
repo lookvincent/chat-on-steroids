@@ -338,7 +338,7 @@ src/shared/types.ts           config/app/IPC types and Capabilities
 
 ── browser ────────────────────────────────────────────────────────────────
 src/main/bridge.ts            extension HTTP bridge + compaction/worker orchestration
-src/main/goal.ts              Goal/Loop OpenRouter driver, durable obligations, one draft per turn
+src/main/goal.ts              Goal/Loop LLM driver (OpenRouter default, custom endpoint optional), durable obligations, one draft per turn
 src/main/agents.ts            the one global star-topology multi-agent broker
 extension/manifest.json       MV3 composition root: service worker, isolated scripts/CSS, MAIN-world Fiber, popup, host/extension permissions
 extension/chatgpt-dom.js      EVERY ChatGPT selector and DOM-shape assumption
@@ -2235,8 +2235,9 @@ auto-compaction setting. The composer context meter shows estimated current-chat
 provider-reported count; Pro has a static ring, while other models show configured utilization.
 
 
-**Goal + Loop.** `goal.ts` is one OpenRouter engine with two standing modes and one optional
-per-chat objective. It sends only authored user messages and final assistant answers to the
+**Goal + Loop.** `goal.ts` is one LLM engine with two standing modes and one optional
+per-chat objective: OpenRouter by default, or a custom OpenAI-compatible endpoint
+(`goal.provider`). It sends only authored user messages and final assistant answers to the
 provider; tool rows, native progress and hidden reasoning stay out of that transcript. That provider
 view comes from the **local canonical recording**, not the live page. `goal.ts::
 conversationMessages()` keeps final assistant revisions only, coalesces duplicate legacy final
@@ -2305,12 +2306,13 @@ project. Keep both properties if you rewrite these; a loop that drifts off the b
 whole night it was left running for.
 
 The Goal **model picker** has its own narrow secret/network boundary. Renderer code never receives
-the OpenRouter key and never fetches the catalogue directly: IPC `goal:models` accepts only a bounded
+the provider key and never fetches the catalogue directly: IPC `goal:models` accepts only a bounded
 offset, fixes the page size at 20, and calls `goal.ts::listGoalModels()`. The main-process catalogue
 loader uses a 30-second request ceiling, 8 MiB response bound and 5,000-model parse cap, sorts newest
 releases first, and caches for five minutes **scoped to a SHA-256 fingerprint of the current API
-key** (or the public/no-key bucket). A key change therefore cannot reuse a restricted catalogue from
-the previous credential. `renderer/chat.ts::loadGoalModels()` / `paintGoalModels()` /
+key** (or the public/no-key bucket) **plus the endpoint URL**. A key or endpoint change therefore cannot reuse a restricted catalogue from
+the previous credential. A custom endpoint that answers no usable catalogue yields an empty
+list and the model stays a hand-typed field. `renderer/chat.ts::loadGoalModels()` / `paintGoalModels()` /
 `maybePageGoalModels()` own scroll-paged presentation only; load failure leaves the user's current
 model selection untouched.
 

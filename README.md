@@ -80,7 +80,7 @@ sha256sum Chat-On-Steroids-Linux-x64.AppImage     # Linux
 - **Chrome 116 or newer** for the companion extension. Without it you still get the MCP tools, but not session attribution, Compact & Resume, worker chats or the Goal loop.
 - **Linux:** a Secret Service keyring such as GNOME Keyring or KWallet. The app refuses Electron's unencrypted `basic_text` fallback for stored keys.
 - A ChatGPT workspace with **Developer mode** and custom MCP apps. OpenAI currently documents full MCP support, including write actions, as a beta for Business, Enterprise and Edu, with Pro limited to read and fetch. Business needs an admin to enable it. Check OpenAI's [Developer mode and MCP apps](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt) page if your workspace looks different.
-- An **OpenRouter API key** only if you select the API source for plans, Goal or Loop. The default ChatGPT helper source uses your connected browser session.
+- An **OpenRouter API key** (or your own OpenAI-compatible endpoint) only if you select the API source for plans, Goal or Loop. The default ChatGPT helper source uses your connected browser session.
 
 Use a normal ChatGPT conversation with the custom app enabled. OpenAI's built-in Agent mode does not use custom apps.
 
@@ -147,6 +147,8 @@ For ordinary models, **Goal** checks a completed answer and either drafts a foll
 **Astra behaves differently.** With Session finish enabled, Goal and Loop both use Loop instructions and deliver through tool injection. Queued user instructions and plan stages take priority. When Astra calls `session_finish` with nothing waiting, your setting chooses a finish notification or automatic follow-up generation. A per-chat Goal/Loop switch also selects automatic generation. The generated instruction arrives on a later tool call; it never automatically starts a new turn after Astra has really finished. Silence alone does not queue a Pro goal, and Pro silence recovery waits ten minutes.
 
 Finish reminders are added by the delivery layer, separate from the visible plan. Desktop notifications depend on OS support and notification settings; the app also offers **Generate Goal** while waiting at a finish point. Native notification actions and cold background browser focus are not yet verified across every supported desktop environment.
+
+It needs a key for the configured API provider — OpenRouter by default, or none at all for a keyless local endpoint — stored encrypted and used only by the app. Provider, model and reasoning level live under **Settings → Agents & automation**. This spends credit on every finished turn and sends messages without asking each time. Switch it off when you are not watching.
 
 ### Multi-agent mode
 

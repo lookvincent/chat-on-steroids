@@ -29,6 +29,7 @@ import { z } from 'zod';
 import {
   CAPABILITIES,
   GOAL_MODES,
+  GOAL_PROVIDERS,
   GOAL_REASONING_LEVELS,
   RELEASES_PAGE,
   type AppState,
@@ -182,24 +183,35 @@ const settingsPatch = z.object({
     // Which of the two standing modes the switch runs. One field, so the renderer has no way
     // to describe a state where Goal and Loop are both on.
     mode: z.enum(GOAL_MODES),
-    // An OpenRouter model id, and validated only as a shape: the catalogue changes weekly,
-    // and an allow-list here would mean this app deciding which models exist.
+    // Which LLM endpoint Goal/Loop drafts run on, plus the custom endpoint's base URL.
+    // The URL is stored verbatim and validated at draft time (see resolveGoalBaseUrl):
+    // a shape check here would either duplicate that logic or silently rewrite the address.
+    provider: z.object({
+      kind: z.enum(GOAL_PROVIDERS),
+      baseUrl: z.string().max(2048)
+    }),
+    // An OpenRouter model id while the provider is openrouter, validated only as a shape:
+    // the catalogue changes weekly, and an allow-list here would mean this app deciding
+    // which models exist.
     // The leading `~` is OpenRouter's own marker for an alias that always resolves to the
     // newest model in a family — `~deepseek/deepseek-v4-flash-latest` and eleven others. The
     // picker lists them because the listing does, so refusing them here meant the one kind
     // of entry most worth choosing was the one kind that could not be saved.
-    model: z
-      .string()
-      .min(1)
-      .max(160)
-      .regex(
-        /^~?[a-z0-9._\-]+\/[a-z0-9._\-]+(:[a-z0-9._\-]+)?$/i,
-        'Expected an OpenRouter model id like vendor/model'
-      ),
+    // A custom endpoint names its own models (`llama3.1`, a deployment id), so while custom
+    // it is any non-empty id instead.
+    model: z.string().min(1).max(160),
     reasoning: z.enum(GOAL_REASONING_LEVELS),
     prompt: z.string().trim().min(1).max(MAX_GOAL_SYSTEM_PROMPT_CHARS),
     objectivePrompt: z.string().trim().min(1).max(MAX_GOAL_SYSTEM_PROMPT_CHARS),
     loopPrompt: z.string().trim().min(1).max(MAX_GOAL_SYSTEM_PROMPT_CHARS)
+  }).superRefine((goal, ctx) => {
+    if (goal.provider.kind !== 'custom' && !/^~?[a-z0-9._-]+\/[a-z0-9._-]+(:[a-z0-9._-]+)?$/i.test(goal.model)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['model'],
+        message: 'Expected an OpenRouter model id like vendor/model'
+      });
+    }
   })
 });
 
@@ -292,6 +304,10 @@ function mergeSettings(current: Config, base: SettingsSnapshot, wanted: Settings
       helperReasoning: pick(current.goal.helperReasoning, base.goal.helperReasoning, wanted.goal.helperReasoning),
       enabled: pick(current.goal.enabled, base.goal.enabled, wanted.goal.enabled),
       mode: pick(current.goal.mode, base.goal.mode, wanted.goal.mode),
+      provider: {
+        kind: pick(current.goal.provider.kind, base.goal.provider.kind, wanted.goal.provider.kind),
+        baseUrl: pick(current.goal.provider.baseUrl, base.goal.provider.baseUrl, wanted.goal.provider.baseUrl)
+      },
       model: pick(current.goal.model, base.goal.model, wanted.goal.model),
       reasoning: pick(current.goal.reasoning, base.goal.reasoning, wanted.goal.reasoning),
       prompt: pick(current.goal.prompt, base.goal.prompt, wanted.goal.prompt),
@@ -332,6 +348,7 @@ async function buildState(): Promise<AppState> {
     secureStorage: await secureStorageStatus(),
     hasApiKey: await hasSecret('openaiApiKey'),
     hasGoalKey: await hasSecret('openRouterApiKey'),
+    hasCustomProviderKey: await hasSecret('customProviderApiKey'),
     resolvedBinary: resolvedBinary(config),
     bundledTunnelVersion: bundledVersion(),
     bridge: await bridgeStatus(),
@@ -401,6 +418,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
       before.goal.backend !== next.goal.backend ||
       before.goal.loopBackend !== next.goal.loopBackend ||
       before.goal.helperModel !== next.goal.helperModel || before.goal.helperReasoning !== next.goal.helperReasoning ||
+      before.goal.provider.kind !== next.goal.provider.kind ||
+      before.goal.provider.baseUrl !== next.goal.provider.baseUrl ||
       before.goal.reasoning !== next.goal.reasoning ||
       before.goal.includeToolCalls !== next.goal.includeToolCalls ||
       before.goal.prompt !== next.goal.prompt ||
@@ -550,14 +569,17 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
    */
   handle('secret:set', async (payload) => {
     const { value, key } = z
-      .object({ value: z.string().max(500), key: z.enum(['openaiApiKey', 'openRouterApiKey']).default('openaiApiKey') })
+      .object({
+        value: z.string().max(500),
+        key: z.enum(['openaiApiKey', 'openRouterApiKey', 'customProviderApiKey']).default('openaiApiKey')
+      })
       .parse(payload);
     if (!(await isEncryptionAvailable())) {
       throw new Error('Secure OS credential storage is unavailable, so the key cannot be stored safely.');
     }
     await setSecret(key, value);
-    if (key === 'openRouterApiKey') retireGoalDrafts();
-    const what = key === 'openRouterApiKey' ? 'openrouter key' : 'api key';
+    if (key === 'openRouterApiKey' || key === 'customProviderApiKey') retireGoalDrafts();
+    const what = key === 'openRouterApiKey' ? 'openrouter key' : key === 'customProviderApiKey' ? 'custom provider key' : 'api key';
     logInfo(value.trim() === '' ? `${what} cleared` : `${what} stored`);
     return buildState();
   });

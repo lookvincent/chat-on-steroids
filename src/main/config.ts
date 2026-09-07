@@ -14,6 +14,7 @@ import {
   CAPABILITIES,
   DEFAULT_CAPABILITIES,
   GOAL_MODES,
+  GOAL_PROVIDERS,
   GOAL_REASONING_LEVELS,
   WRITE_CAPABILITIES,
   type Capabilities,
@@ -151,6 +152,9 @@ const DEFAULT_GOAL: GoalSettings = {
   // the one that can end by itself: a loop that never stops is a deliberate choice, not a
   // default anybody should discover by turning something on.
   mode: 'goal',
+  // OpenRouter stays the default provider so an upgrade changes nothing for anyone who
+  // never touches the switch; a hand-written config predating the field parses the same way.
+  provider: { kind: 'openrouter', baseUrl: '' },
   model: DEFAULT_GOAL_MODEL,
   reasoning: 'default',
   prompt: DEFAULT_GOAL_SYSTEM_PROMPT,
@@ -357,6 +361,18 @@ const configSchema = z.object({
       // written by a version that knows one more mode than this one must not send every root
       // and permission in the file through conservative recovery over a single word.
       mode: z.enum(GOAL_MODES).optional().default(DEFAULT_GOAL.mode).catch(DEFAULT_GOAL.mode),
+      provider: z
+        .object({
+          // Repaired rather than rejected like `mode` above: a config written by a version
+          // that knows one more provider than this one must not invalidate every root and
+          // permission in the file over a single word.
+          kind: z.enum(GOAL_PROVIDERS).optional().default('openrouter').catch('openrouter'),
+          // Stored verbatim and validated at draft time: a URL cannot be repaired the way an
+          // enum can, and silently rewriting it would point a key at a host nobody chose.
+          baseUrl: z.string().max(2048).optional().default('')
+        })
+        .optional()
+        .default({ ...DEFAULT_GOAL.provider }),
       model: z
         .string()
         .max(160)

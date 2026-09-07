@@ -2360,3 +2360,174 @@ it('never owes or generates a browser continuation for Astra even with Goal arme
   await vi.waitFor(() => expect(goal.goalViewFor(conversationId)?.stage).toBe('no-reply'));
   expect(fetch).not.toHaveBeenCalled();
 });
+
+describe('a custom OpenAI-compatible provider', () => {
+  async function useCustom(over: Record<string, unknown> = {}): Promise<void> {
+    await saveConfig({
+      ...defaultConfig(),
+      goal: {
+        ...defaultConfig().goal,
+        enabled: true,
+        // The api backend is the only one that fetches; the other backends never read
+        // the provider block.
+        backend: 'api',
+        loopBackend: 'api',
+        model: 'llama3.1',
+        reasoning: 'default',
+        provider: { kind: 'custom', baseUrl: 'http://localhost:11434/v1' },
+        ...over
+      }
+    });
+    // Keyless unless the test stores one: a local server usually needs no secret, and the
+    // OpenRouter key from the outer beforeEach must never leak into a custom request.
+    await setSecret('customProviderApiKey', '');
+  }
+
+  async function userSession(conversationId: string): Promise<{ id: string }> {
+    const session = await createSession({ title: 'goal', conversationId });
+    await appendEvent(session.id, {
+      time: 1_000,
+      source: 'extension',
+      kind: 'user_message',
+      message: { text: 'build the parser', truncated: false, chars: 16 }
+    });
+    return session;
+  }
+
+  it('posts plain chat completions with no vendor fields and no key when keyless', async () => {
+    await useCustom();
+    const session = await userSession('c-custom-1');
+    let sent: any = null;
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      sent = { url, headers: init.headers, body: JSON.parse(String(init.body)) };
+      return decision('continue', 'check the tokenizer first');
+    }) as never;
+
+    goal.startGoalDraft({ sessionId: session.id, conversationId: 'c-custom-1', turnId: 'g-1' });
+    const view = await settled('c-custom-1');
+
+    expect(view.stage).toBe('ready');
+    expect(sent.url).toBe('http://localhost:11434/v1/chat/completions');
+    expect(sent.headers).not.toHaveProperty('authorization');
+    expect(sent.headers).not.toHaveProperty('HTTP-Referer');
+    expect(sent.headers).not.toHaveProperty('X-Title');
+    expect(sent.body.model).toBe('llama3.1');
+    // run() always streams to the panel consumer on this base; the bounded parse is unchanged.
+    expect(sent.body.stream).toBe(true);
+    expect(sent.body).not.toHaveProperty('plugins');
+    expect(sent.body).not.toHaveProperty('provider');
+    expect(sent.body).not.toHaveProperty('reasoning');
+    expect(sent.body.response_format).toMatchObject({
+      type: 'json_schema',
+      json_schema: { name: 'goal_decision', strict: true }
+    });
+  });
+
+  it('sends the custom key and the bare reasoning effort when both are configured', async () => {
+    await useCustom({ reasoning: 'high' });
+    await setSecret('customProviderApiKey', 'sk-custom-test');
+    const session = await userSession('c-custom-2');
+    let sent: any = null;
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      sent = { url, headers: init.headers, body: JSON.parse(String(init.body)) };
+      return decision('stop');
+    }) as never;
+
+    goal.startGoalDraft({ sessionId: session.id, conversationId: 'c-custom-2', turnId: 'g-1' });
+    const view = await settled('c-custom-2');
+
+    expect(view.stage).toBe('no-reply');
+    expect((sent.headers as Record<string, string>).authorization).toBe('Bearer sk-custom-test');
+    // `exclude` is OpenRouter vocabulary; a custom endpoint gets the effort alone.
+    expect(sent.body.reasoning).toEqual({ effort: 'high' });
+  });
+
+  it('fails settled on an invalid base URL instead of retrying forever', async () => {
+    await useCustom();
+    await saveConfig({
+      ...defaultConfig(),
+      goal: {
+        ...defaultConfig().goal,
+        enabled: true,
+        backend: 'api',
+        model: 'llama3.1',
+        provider: { kind: 'custom', baseUrl: 'nota url' }
+      }
+    });
+    const session = await userSession('c-custom-3');
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      return decision('continue', 'never reached');
+    }) as never;
+
+    goal.startGoalDraft({ sessionId: session.id, conversationId: 'c-custom-3', turnId: 'g-1' });
+    const view = await settled('c-custom-3');
+
+    expect(view.stage).toBe('failed');
+    expect(view.error).toMatch(/^invalid_provider/);
+    expect(view.retryable).toBe(false);
+    expect(calls).toBe(0);
+  });
+
+  it('reads a vanilla OpenAI model list, and an empty one when unreachable', async () => {
+    await useCustom();
+    globalThis.fetch = (async (url: string) => {
+      expect(String(url)).toBe('http://localhost:11434/v1/models');
+      return Response.json({ data: [{ id: 'llama3.1' }, { id: 'qwen3:8b', created: 1_700_000_000 }] });
+    }) as never;
+    const page = await goal.listGoalModels(0, 20);
+    expect(page.models.map((model) => model.id).sort()).toEqual(['llama3.1', 'qwen3:8b']);
+    expect(page.models.find((model) => model.id === 'llama3.1')?.name).toBe('llama3.1');
+
+    globalThis.fetch = (async () => {
+      throw new TypeError('fetch failed');
+    }) as never;
+    // A different endpoint is a different cache scope, so this really exercises the
+    // failure path rather than the five-minute catalogue cache from the fetch above.
+    await saveConfig({
+      ...defaultConfig(),
+      goal: {
+        ...defaultConfig().goal,
+        enabled: true,
+        model: 'llama3.1',
+        provider: { kind: 'custom', baseUrl: 'http://localhost:11435/v1' }
+      }
+    });
+    const empty = await goal.listGoalModels(0, 20);
+    expect(empty).toEqual({ models: [], total: 0 });
+  });
+
+  it('requires a key for OpenRouter but not for a custom endpoint', async () => {
+    await saveConfig({
+      ...defaultConfig(),
+      goal: {
+        ...defaultConfig().goal,
+        backend: 'api',
+        provider: { kind: 'custom', baseUrl: 'http://localhost:11434/v1' }
+      }
+    });
+    await setSecret('openRouterApiKey', '');
+    await setSecret('customProviderApiKey', '');
+    expect(await goal.goalKeyPresent()).toBe(true);
+
+    await saveConfig({
+      ...defaultConfig(),
+      goal: { ...defaultConfig().goal, backend: 'api', provider: { kind: 'openrouter', baseUrl: '' } }
+    });
+    expect(await goal.goalKeyPresent()).toBe(false);
+    await setSecret('openRouterApiKey', 'sk-or-test');
+    expect(await goal.goalKeyPresent()).toBe(true);
+  });
+
+  it('accepts https and loopback http base URLs and refuses the rest', () => {
+    const open = (baseUrl: string) => goal.resolveGoalBaseUrl({ kind: 'custom', baseUrl });
+    expect(open('https://llm.example.com/v1/')).toBe('https://llm.example.com/v1');
+    expect(open('http://localhost:11434/v1')).toBe('http://localhost:11434/v1');
+    expect(open('http://127.0.0.1:11434')).toBe('http://127.0.0.1:11434');
+    for (const bad of ['notaurl', '', 'http://llm.example.com/v1', 'https://user:pass@llm.example.com/v1', 'ftp://llm.example.com']) {
+      expect(() => open(bad), bad).toThrow(/^invalid_provider/);
+    }
+    expect(goal.resolveGoalBaseUrl({ kind: 'openrouter', baseUrl: '' })).toBe('https://openrouter.ai/api/v1');
+  });
+});
